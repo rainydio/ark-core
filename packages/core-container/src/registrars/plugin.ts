@@ -32,14 +32,14 @@ export class PluginRegistrar {
             }
         }
 
-        const failedPlugins: number = Object.keys(this.failedPlugins).length;
-        if (failedPlugins > 0) {
+        const count = Object.keys(this.failedPlugins).length;
+        if (count > 0) {
             const logger = this.container.resolvePlugin<Logger.ILogger>("logger");
             if (logger) {
-                logger.warn(`Failed to load ${failedPlugins} optional plugins.`);
+                logger.warn(`Failed to start ${count} optional plugins.`);
 
                 for (const [name, error] of Object.entries(this.failedPlugins)) {
-                    logger.warn(`Plugin '${name}': ${error.message}`);
+                    logger.warn(`Plugin "${name}": ${error.message}`);
                 }
             }
         }
@@ -71,7 +71,7 @@ export class PluginRegistrar {
                 options = Hoek.applyToDefaults(this.plugins[name], options);
             }
 
-            return this.registerWithContainer(name, options);
+            await this.registerWithContainer(name, options);
         } catch (error) {
             this.failedPlugins[name] = error;
         }
@@ -88,7 +88,7 @@ export class PluginRegistrar {
         try {
             item = this.resolve(plugin);
         } catch (error) {
-            this.failedPlugins[plugin] = error;
+            this.container.forceExit(`Failed to load plugin "${plugin}"`, error);
             return;
         }
 
@@ -115,8 +115,10 @@ export class PluginRegistrar {
 
         if (!semver.valid(version)) {
             throw new Error(
-                // tslint:disable-next-line:max-line-length
-                `The plugin "${name}" provided an invalid version "${version}". Please check https://semver.org/ and make sure you follow the spec.`,
+                [
+                    `The plugin "${name}" provided an invalid version "${version}".`,
+                    "Please check https://semver.org/ and make sure you follow the spec.",
+                ].join(" "),
             );
         }
 
@@ -124,16 +126,8 @@ export class PluginRegistrar {
         this.container.register(`pkg.${alias || name}.opts`, asValue(options));
 
         try {
-            plugin = await item.plugin.register(this.container, options);
-            this.container.register(
-                alias || name,
-                asValue({
-                    name,
-                    version,
-                    plugin,
-                }),
-            );
-
+            const impl = await item.plugin.register(this.container, options);
+            this.container.register(alias || name, asValue({ name, version, plugin: impl }));
             this.plugins[name] = options;
 
             if (item.plugin.deregister) {
@@ -141,7 +135,7 @@ export class PluginRegistrar {
             }
         } catch (error) {
             if (item.plugin.required) {
-                this.container.forceExit(`Failed to load required plugin '${name}'`, error);
+                this.container.forceExit(`Failed to start required plugin "${name}"`, error);
             } else {
                 this.failedPlugins[name] = error;
             }

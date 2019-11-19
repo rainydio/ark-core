@@ -129,7 +129,7 @@ export class Container implements container.IContainer {
     public exit(exitCode: number, message: string, error?: Error): void {
         this.shuttingDown = true;
 
-        const logger = this.resolvePlugin<Logger.ILogger>("logger");
+        const logger = this.resolvePlugin<Logger.ILogger>("logger") || console;
         logger.error(message);
 
         if (error) {
@@ -146,8 +146,10 @@ export class Container implements container.IContainer {
     public setVersion(version: string): void {
         if (!semver.valid(version)) {
             this.forceExit(
-                // tslint:disable-next-line:max-line-length
-                `The provided version ("${version}") is invalid. Please check https://semver.org/ and make sure you follow the spec.`,
+                [
+                    `The provided version ("${version}") is invalid.`,
+                    "Please check https://semver.org/ and make sure you follow the spec.",
+                ].join(" "),
             );
         }
 
