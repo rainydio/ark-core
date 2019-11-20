@@ -51,33 +51,6 @@ describe("Models - Wallet", () => {
                 totalFee: Utils.BigNumber.make(1000000000),
             };
         });
-
-        it("should apply correct block", () => {
-            testWallet.applyBlock(block);
-            expect(testWallet.balance).toEqual(block.reward.plus(block.totalFee));
-
-            const delegate: State.IWalletDelegateAttributes = testWallet.getAttribute("delegate");
-            expect(delegate.producedBlocks).toBe(1);
-            expect(delegate.forgedFees).toEqual(block.totalFee);
-            expect(delegate.forgedRewards).toEqual(block.totalFee);
-            expect(delegate.lastBlock).toBeObject();
-        });
-
-        it("should not apply incorrect block", () => {
-            block.generatorPublicKey = ("a" as any).repeat(66);
-            const originalWallet = Object.assign(new Wallet(testWallet.address), testWallet);
-            const delegate: State.IWalletDelegateAttributes = testWallet.getAttribute("delegate");
-            const original: State.IWalletDelegateAttributes = originalWallet.getAttribute("delegate");
-
-            testWallet.applyBlock(block);
-
-            expect(testWallet.balance).toEqual(originalWallet.balance);
-
-            expect(delegate.producedBlocks).toBe(0);
-            expect(delegate.forgedFees).toEqual(original.forgedFees);
-            expect(delegate.forgedRewards).toEqual(original.forgedRewards);
-            expect(delegate.lastBlock).toBe(original.lastBlock);
-        });
     });
 
     describe("revert block", () => {
