@@ -238,18 +238,6 @@ export class WalletManager implements State.IWalletManager {
         return delegates;
     }
 
-    // Only called during integrity verification on boot.
-    public buildVoteBalances(): void {
-        for (const voter of this.allByPublicKey()) {
-            if (voter.hasVoted()) {
-                const delegate: State.IWallet = this.findByPublicKey(voter.getAttribute<string>("vote"));
-                const voteBalance: Utils.BigNumber = delegate.getAttribute("delegate.voteBalance");
-                const lockedBalance = voter.getAttribute("htlc.lockedBalance", Utils.BigNumber.ZERO);
-                delegate.setAttribute("delegate.voteBalance", voteBalance.plus(voter.balance).plus(lockedBalance));
-            }
-        }
-    }
-
     public async applyBlock(block: Interfaces.IBlock): Promise<void> {
         this.currentBlock = block;
         const appliedTransactions: Interfaces.ITransaction[] = [];
@@ -352,10 +340,10 @@ export class WalletManager implements State.IWalletManager {
         delegate.forgedFees = delegate.forgedFees.plus(block.data.totalFee);
         delegate.forgedRewards = delegate.forgedRewards.plus(block.data.reward);
         delegate.lastBlock = block.data;
-        const balanceIncrease: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
-        generatorWallet.balance = generatorWallet.balance.plus(balanceIncrease);
+        const total: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
+        generatorWallet.balance = generatorWallet.balance.plus(total);
         if (generatorWallet.hasVoted()) {
-            this.changeDelegateVoteBalance(generatorWallet, balanceIncrease);
+            this.increaseDelegateVoteBalance(generatorWallet, total);
         }
     }
 
@@ -370,18 +358,26 @@ export class WalletManager implements State.IWalletManager {
         delegate.forgedFees = delegate.forgedFees.minus(block.data.totalFee);
         delegate.forgedRewards = delegate.forgedRewards.minus(block.data.reward);
         delegate.lastBlock = undefined; // TODO: get it back from database?
-        const balanceIncrease: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
-        generatorWallet.balance = generatorWallet.balance.minus(balanceIncrease);
+        const total: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
+        generatorWallet.balance = generatorWallet.balance.minus(total);
         if (generatorWallet.hasVoted()) {
-            this.changeDelegateVoteBalance(generatorWallet, balanceIncrease.times(-1));
+            this.decreaseDelegateVoteBalance(generatorWallet, total);
         }
     }
 
-    public changeDelegateVoteBalance(voterWallet: State.IWallet, amount: Utils.BigNumber): void {
+    public increaseDelegateVoteBalance(voterWallet: State.IWallet, amount: Utils.BigNumber): void {
         const delegatePublicKey = voterWallet.getAttribute<string>("vote");
         const delegateWallet = this.findByPublicKey(delegatePublicKey);
         const oldDelegateVoteBalance = delegateWallet.getAttribute<Utils.BigNumber>("delegate.voteBalance");
         const newDelegateVoteBalance = oldDelegateVoteBalance.plus(amount);
+        delegateWallet.setAttribute("delegate.voteBalance", newDelegateVoteBalance);
+    }
+
+    public decreaseDelegateVoteBalance(voterWallet: State.IWallet, amount: Utils.BigNumber): void {
+        const delegatePublicKey = voterWallet.getAttribute<string>("vote");
+        const delegateWallet = this.findByPublicKey(delegatePublicKey);
+        const oldDelegateVoteBalance = delegateWallet.getAttribute<Utils.BigNumber>("delegate.voteBalance");
+        const newDelegateVoteBalance = oldDelegateVoteBalance.minus(amount);
         delegateWallet.setAttribute("delegate.voteBalance", newDelegateVoteBalance);
     }
 
@@ -463,125 +459,95 @@ export class WalletManager implements State.IWalletManager {
         lockTransaction: Interfaces.ITransactionData,
         revert: boolean = false,
     ): void {
-        if (
-            transaction.type === Enums.TransactionType.Vote &&
-            transaction.typeGroup === Enums.TransactionTypeGroup.Core
-        ) {
-            const vote: string = transaction.asset.votes[0];
-            const delegate: State.IWallet = this.findByPublicKey(vote.substr(1));
-            let voteBalance: Utils.BigNumber = delegate.getAttribute("delegate.voteBalance", Utils.BigNumber.ZERO);
-
-            if (vote.startsWith("+")) {
-                voteBalance = revert
-                    ? voteBalance.minus(sender.balance.minus(transaction.fee))
-                    : voteBalance.plus(sender.balance);
-            } else {
-                voteBalance = revert
-                    ? voteBalance.plus(sender.balance)
-                    : voteBalance.minus(sender.balance.plus(transaction.fee));
-            }
-
-            delegate.setAttribute("delegate.voteBalance", voteBalance);
-        } else {
-            // Update vote balance of the sender's delegate
-            if (sender.hasVoted()) {
-                const delegate: State.IWallet = this.findByPublicKey(sender.getAttribute("vote"));
-                const amount =
-                    transaction.type === Enums.TransactionType.MultiPayment &&
-                    transaction.typeGroup === Enums.TransactionTypeGroup.Core
-                        ? transaction.asset.payments.reduce(
-                              (prev, curr) => prev.plus(curr.amount),
-                              Utils.BigNumber.ZERO,
-                          )
-                        : transaction.amount;
-                const total: Utils.BigNumber = amount.plus(transaction.fee);
-
-                const voteBalance: Utils.BigNumber = delegate.getAttribute(
-                    "delegate.voteBalance",
-                    Utils.BigNumber.ZERO,
-                );
-                let newVoteBalance: Utils.BigNumber;
-
-                if (
-                    transaction.type === Enums.TransactionType.HtlcLock &&
-                    transaction.typeGroup === Enums.TransactionTypeGroup.Core
-                ) {
-                    // HTLC Lock keeps the locked amount as the sender's delegate vote balance
-                    newVoteBalance = revert ? voteBalance.plus(transaction.fee) : voteBalance.minus(transaction.fee);
-                } else if (
-                    transaction.type === Enums.TransactionType.HtlcClaim &&
-                    transaction.typeGroup === Enums.TransactionTypeGroup.Core
-                ) {
-                    // HTLC Claim transfers the locked amount to the lock recipient's (= claim sender) delegate vote balance
-                    newVoteBalance = revert
-                        ? voteBalance.plus(transaction.fee).minus(lockTransaction.amount)
-                        : voteBalance.minus(transaction.fee).plus(lockTransaction.amount);
-                } else {
-                    // General case : sender delegate vote balance reduced by amount + fees (or increased if revert)
-                    newVoteBalance = revert ? voteBalance.plus(total) : voteBalance.minus(total);
-                }
-                delegate.setAttribute("delegate.voteBalance", newVoteBalance);
-            }
-
-            if (
-                transaction.type === Enums.TransactionType.HtlcClaim &&
-                transaction.typeGroup === Enums.TransactionTypeGroup.Core &&
-                lockWallet.hasAttribute("vote")
-            ) {
-                // HTLC Claim transfers the locked amount to the lock recipient's (= claim sender) delegate vote balance
-                const lockWalletDelegate: State.IWallet = this.findByPublicKey(lockWallet.getAttribute("vote"));
-                const lockWalletDelegateVoteBalance: Utils.BigNumber = lockWalletDelegate.getAttribute(
-                    "delegate.voteBalance",
-                    Utils.BigNumber.ZERO,
-                );
-                lockWalletDelegate.setAttribute(
-                    "delegate.voteBalance",
-                    revert
-                        ? lockWalletDelegateVoteBalance.plus(lockTransaction.amount)
-                        : lockWalletDelegateVoteBalance.minus(lockTransaction.amount),
-                );
-            }
-
-            if (
+        // Update vote balance of the sender's delegate
+        if (sender.hasVoted()) {
+            const delegate: State.IWallet = this.findByPublicKey(sender.getAttribute("vote"));
+            const amount =
                 transaction.type === Enums.TransactionType.MultiPayment &&
                 transaction.typeGroup === Enums.TransactionTypeGroup.Core
+                    ? transaction.asset.payments.reduce((prev, curr) => prev.plus(curr.amount), Utils.BigNumber.ZERO)
+                    : transaction.amount;
+            const total: Utils.BigNumber = amount.plus(transaction.fee);
+
+            const voteBalance: Utils.BigNumber = delegate.getAttribute("delegate.voteBalance", Utils.BigNumber.ZERO);
+            let newVoteBalance: Utils.BigNumber;
+
+            if (
+                transaction.type === Enums.TransactionType.HtlcLock &&
+                transaction.typeGroup === Enums.TransactionTypeGroup.Core
             ) {
-                // go through all payments and update recipients delegates vote balance
-                for (const { recipientId, amount } of transaction.asset.payments) {
-                    const recipientWallet: State.IWallet = this.findByAddress(recipientId);
-                    const vote = recipientWallet.getAttribute("vote");
-                    if (vote) {
-                        const delegate: State.IWallet = this.findByPublicKey(vote);
-                        const voteBalance: Utils.BigNumber = delegate.getAttribute(
-                            "delegate.voteBalance",
-                            Utils.BigNumber.ZERO,
-                        );
-                        delegate.setAttribute(
-                            "delegate.voteBalance",
-                            revert ? voteBalance.minus(amount) : voteBalance.plus(amount),
-                        );
-                    }
+                // HTLC Lock keeps the locked amount as the sender's delegate vote balance
+                newVoteBalance = revert ? voteBalance.plus(transaction.fee) : voteBalance.minus(transaction.fee);
+            } else if (
+                transaction.type === Enums.TransactionType.HtlcClaim &&
+                transaction.typeGroup === Enums.TransactionTypeGroup.Core
+            ) {
+                // HTLC Claim transfers the locked amount to the lock recipient's (= claim sender) delegate vote balance
+                newVoteBalance = revert
+                    ? voteBalance.plus(transaction.fee).minus(lockTransaction.amount)
+                    : voteBalance.minus(transaction.fee).plus(lockTransaction.amount);
+            } else {
+                // General case : sender delegate vote balance reduced by amount + fees (or increased if revert)
+                newVoteBalance = revert ? voteBalance.plus(total) : voteBalance.minus(total);
+            }
+            delegate.setAttribute("delegate.voteBalance", newVoteBalance);
+        }
+
+        if (
+            transaction.type === Enums.TransactionType.HtlcClaim &&
+            transaction.typeGroup === Enums.TransactionTypeGroup.Core &&
+            lockWallet.hasAttribute("vote")
+        ) {
+            // HTLC Claim transfers the locked amount to the lock recipient's (= claim sender) delegate vote balance
+            const lockWalletDelegate: State.IWallet = this.findByPublicKey(lockWallet.getAttribute("vote"));
+            const lockWalletDelegateVoteBalance: Utils.BigNumber = lockWalletDelegate.getAttribute(
+                "delegate.voteBalance",
+                Utils.BigNumber.ZERO,
+            );
+            lockWalletDelegate.setAttribute(
+                "delegate.voteBalance",
+                revert
+                    ? lockWalletDelegateVoteBalance.plus(lockTransaction.amount)
+                    : lockWalletDelegateVoteBalance.minus(lockTransaction.amount),
+            );
+        }
+
+        if (
+            transaction.type === Enums.TransactionType.MultiPayment &&
+            transaction.typeGroup === Enums.TransactionTypeGroup.Core
+        ) {
+            // go through all payments and update recipients delegates vote balance
+            for (const { recipientId, amount } of transaction.asset.payments) {
+                const recipientWallet: State.IWallet = this.findByAddress(recipientId);
+                const vote = recipientWallet.getAttribute("vote");
+                if (vote) {
+                    const delegate: State.IWallet = this.findByPublicKey(vote);
+                    const voteBalance: Utils.BigNumber = delegate.getAttribute(
+                        "delegate.voteBalance",
+                        Utils.BigNumber.ZERO,
+                    );
+                    delegate.setAttribute(
+                        "delegate.voteBalance",
+                        revert ? voteBalance.minus(amount) : voteBalance.plus(amount),
+                    );
                 }
             }
+        }
 
-            // Update vote balance of recipient's delegate
-            if (
-                recipient &&
-                recipient.hasVoted() &&
-                (transaction.type !== Enums.TransactionType.HtlcLock ||
-                    transaction.typeGroup !== Enums.TransactionTypeGroup.Core)
-            ) {
-                const delegate: State.IWallet = this.findByPublicKey(recipient.getAttribute("vote"));
-                const voteBalance: Utils.BigNumber = delegate.getAttribute(
-                    "delegate.voteBalance",
-                    Utils.BigNumber.ZERO,
-                );
+        // Update vote balance of recipient's delegate
+        if (
+            recipient &&
+            recipient.hasVoted() &&
+            (transaction.type !== Enums.TransactionType.HtlcLock ||
+                transaction.typeGroup !== Enums.TransactionTypeGroup.Core)
+        ) {
+            const delegate: State.IWallet = this.findByPublicKey(recipient.getAttribute("vote"));
+            const voteBalance: Utils.BigNumber = delegate.getAttribute("delegate.voteBalance", Utils.BigNumber.ZERO);
 
-                delegate.setAttribute(
-                    "delegate.voteBalance",
-                    revert ? voteBalance.minus(transaction.amount) : voteBalance.plus(transaction.amount),
-                );
-            }
+            delegate.setAttribute(
+                "delegate.voteBalance",
+                revert ? voteBalance.minus(transaction.amount) : voteBalance.plus(transaction.amount),
+            );
         }
     }
 }

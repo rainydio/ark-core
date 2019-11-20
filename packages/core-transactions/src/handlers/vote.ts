@@ -51,11 +51,11 @@ export class VoteTransactionHandler extends TransactionHandler {
             }
         }
 
-        //        for (const voter of walletManager.allByPublicKey()) {
-        //            if (voter.hasVoted()) {
-        //                walletManager.changeDelegateVoteBalance(voter, voter.balance);
-        //            }
-        //        }
+        for (const voter of walletManager.allByPublicKey()) {
+            if (voter.hasVoted()) {
+                walletManager.increaseDelegateVoteBalance(voter, voter.balance);
+            }
+        }
     }
 
     public async isActivated(): Promise<boolean> {
@@ -130,8 +130,10 @@ export class VoteTransactionHandler extends TransactionHandler {
 
         if (vote.startsWith("+")) {
             sender.setAttribute("vote", vote.slice(1));
+            walletManager.increaseDelegateVoteBalance(sender, sender.balance);
         } else {
             sender.forgetAttribute("vote");
+            walletManager.decreaseDelegateVoteBalance(sender, sender.balance);
         }
     }
 
@@ -146,8 +148,10 @@ export class VoteTransactionHandler extends TransactionHandler {
 
         if (vote.startsWith("+")) {
             sender.forgetAttribute("vote");
+            walletManager.decreaseDelegateVoteBalance(sender, sender.balance);
         } else {
             sender.setAttribute("vote", vote.slice(1));
+            walletManager.increaseDelegateVoteBalance(sender, sender.balance);
         }
     }
 

@@ -34,7 +34,6 @@ export class StateBuilder {
         }
 
         this.logger.info(`State Generation - Step ${steps} of ${steps}: Vote Balances & Delegate Ranking`);
-        this.walletManager.buildVoteBalances();
         this.walletManager.buildDelegateRanking();
 
         this.logger.info(

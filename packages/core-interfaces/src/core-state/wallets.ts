@@ -117,8 +117,6 @@ export interface IWalletManager {
 
     loadActiveDelegateList(roundInfo: IRoundInfo): IWallet[];
 
-    buildVoteBalances(): void;
-
     applyBlock(block: Interfaces.IBlock): Promise<void>;
 
     buildDelegateRanking(roundInfo?: Shared.IRoundInfo): IWallet[];
@@ -133,7 +131,9 @@ export interface IWalletManager {
 
     revertBlockGeneratorWallet(block: Interfaces.IBlock): void;
 
-    changeDelegateVoteBalance(wallet: IWallet, amount: Utils.BigNumber): void;
+    increaseDelegateVoteBalance(wallet: IWallet, amount: Utils.BigNumber): void;
+
+    decreaseDelegateVoteBalance(wallet: IWallet, amount: Utils.BigNumber): void;
 
     canBePurged(wallet: IWallet): boolean;
 

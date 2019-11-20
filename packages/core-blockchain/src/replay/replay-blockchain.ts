@@ -137,7 +137,11 @@ export class ReplayBlockchain extends Blockchain {
             }
         }
 
-        this.walletManager.buildVoteBalances();
+        for (const voter of this.walletManager.allByPublicKey()) {
+            if (voter.hasVoted()) {
+                this.walletManager.increaseDelegateVoteBalance(voter, voter.balance);
+            }
+        }
 
         this.state.setLastBlock(genesisBlock);
 

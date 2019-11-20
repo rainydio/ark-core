@@ -183,7 +183,8 @@ export abstract class TransactionHandler implements ITransactionHandler {
 
         sender.nonce = nonce;
 
-        const newBalance: Utils.BigNumber = sender.balance.minus(data.amount).minus(data.fee);
+        const decreaseAmount: Utils.BigNumber = data.amount.plus(data.fee);
+        const newBalance: Utils.BigNumber = sender.balance.minus(decreaseAmount);
 
         if (process.env.CORE_ENV === "test") {
             assert(Utils.isException(transaction.data) || !newBalance.isNegative());
@@ -199,6 +200,10 @@ export abstract class TransactionHandler implements ITransactionHandler {
         }
 
         sender.balance = newBalance;
+
+        if (sender.hasVoted()) {
+            walletManager.decreaseDelegateVoteBalance(sender, decreaseAmount);
+        }
     }
 
     public async revertForSender(
@@ -208,7 +213,8 @@ export abstract class TransactionHandler implements ITransactionHandler {
         const sender: State.IWallet = walletManager.findByPublicKey(transaction.data.senderPublicKey);
         const data: Interfaces.ITransactionData = transaction.data;
 
-        sender.balance = sender.balance.plus(data.amount).plus(data.fee);
+        const increaseAmount = data.amount.plus(data.fee);
+        sender.balance = sender.balance.plus(increaseAmount);
 
         if (data.version > 1) {
             sender.verifyTransactionNonceRevert(transaction);
