@@ -354,7 +354,9 @@ export class WalletManager implements State.IWalletManager {
         delegate.lastBlock = block.data;
         const balanceIncrease: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
         generatorWallet.balance = generatorWallet.balance.plus(balanceIncrease);
-        this.changeDelegateVoteBalance(generatorWallet, balanceIncrease);
+        if (generatorWallet.hasVoted()) {
+            this.changeDelegateVoteBalance(generatorWallet, balanceIncrease);
+        }
     }
 
     public revertBlockGeneratorWallet(block: Interfaces.IBlock) {
@@ -370,17 +372,17 @@ export class WalletManager implements State.IWalletManager {
         delegate.lastBlock = undefined; // TODO: get it back from database?
         const balanceIncrease: Utils.BigNumber = block.data.reward.plus(block.data.totalFee);
         generatorWallet.balance = generatorWallet.balance.minus(balanceIncrease);
-        this.changeDelegateVoteBalance(generatorWallet, balanceIncrease.times(-1));
+        if (generatorWallet.hasVoted()) {
+            this.changeDelegateVoteBalance(generatorWallet, balanceIncrease.times(-1));
+        }
     }
 
-    public changeDelegateVoteBalance(wallet: State.IWallet, amount: Utils.BigNumber): void {
-        if (wallet.hasVoted()) {
-            const delegatePublicKey = wallet.getAttribute<string>("vote");
-            const delegateWallet = this.findByPublicKey(delegatePublicKey);
-            const oldDelegateVoteBalance = delegateWallet.getAttribute<Utils.BigNumber>("delegate.voteBalance");
-            const newDelegateVoteBalance = oldDelegateVoteBalance.plus(amount);
-            delegateWallet.setAttribute("delegate.voteBalance", newDelegateVoteBalance);
-        }
+    public changeDelegateVoteBalance(voterWallet: State.IWallet, amount: Utils.BigNumber): void {
+        const delegatePublicKey = voterWallet.getAttribute<string>("vote");
+        const delegateWallet = this.findByPublicKey(delegatePublicKey);
+        const oldDelegateVoteBalance = delegateWallet.getAttribute<Utils.BigNumber>("delegate.voteBalance");
+        const newDelegateVoteBalance = oldDelegateVoteBalance.plus(amount);
+        delegateWallet.setAttribute("delegate.voteBalance", newDelegateVoteBalance);
     }
 
     public canBePurged(wallet: State.IWallet): boolean {

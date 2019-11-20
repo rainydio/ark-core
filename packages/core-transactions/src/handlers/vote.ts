@@ -50,6 +50,12 @@ export class VoteTransactionHandler extends TransactionHandler {
                 }
             }
         }
+
+        //        for (const voter of walletManager.allByPublicKey()) {
+        //            if (voter.hasVoted()) {
+        //                walletManager.changeDelegateVoteBalance(voter, voter.balance);
+        //            }
+        //        }
     }
 
     public async isActivated(): Promise<boolean> {
