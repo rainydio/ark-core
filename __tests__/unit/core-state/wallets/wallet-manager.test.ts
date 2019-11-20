@@ -14,7 +14,9 @@ import wallets from "../__fixtures__/wallets.json";
 const { BlockFactory } = Blocks;
 const { SATOSHI } = Constants;
 
-const block3 = fixtures.blocks2to100[1];
+const block3 = Object.assign({}, fixtures.blocks2to100[1], {
+    totalFee: Utils.BigNumber.make(17 * SATOSHI),
+});
 const block = BlockFactory.fromData(block3);
 
 const walletData1 = wallets[0];
@@ -70,8 +72,8 @@ describe("Wallet Manager", () => {
             generatorWallet.setAttribute<State.IWalletDelegateAttributes>("delegate", {
                 username: "generator",
                 voteBalance: Utils.BigNumber.ZERO,
-                forgedFees: new Utils.BigNumber(100),
-                forgedRewards: new Utils.BigNumber(50),
+                forgedFees: Utils.BigNumber.make(100 * SATOSHI),
+                forgedRewards: Utils.BigNumber.make(50 * SATOSHI),
                 producedBlocks: 100,
                 rank: undefined,
             });
@@ -83,13 +85,10 @@ describe("Wallet Manager", () => {
             jest.spyOn(walletManager, "applyTransaction").mockImplementation();
             jest.spyOn(walletManager, "revertTransaction").mockImplementation();
 
-            const { data } = block;
-            data.transactions = [];
-            data.transactions.push(txs[0].data);
-            data.transactions.push(txs[1].data);
-            data.transactions.push(txs[2].data);
-            data.numberOfTransactions = 3; // NOTE: if transactions are added to a fixture the NoT needs to be increased
-            block2 = BlockFactory.fromData(data);
+            block.data.transactions = [txs[0].data, txs[1].data, txs[2].data];
+            block.data.numberOfTransactions = 3; // NOTE: if transactions are added to a fixture the NoT needs to be increased
+            block2 = BlockFactory.fromData(block.data);
+            block2.data.reward = Utils.BigNumber.make(11 * SATOSHI);
         });
 
         describe("applyBlock", () => {
@@ -107,8 +106,8 @@ describe("Wallet Manager", () => {
 
                 const delegate = generatorWallet.getAttribute<State.IWalletDelegateAttributes>("delegate");
                 expect(delegate.producedBlocks).toBe(101);
-                expect(delegate.forgedFees).toEqual(new Utils.BigNumber(100).plus(block.data.totalFee));
-                expect(delegate.forgedRewards).toEqual(new Utils.BigNumber(50).plus(block.data.reward));
+                expect(delegate.forgedFees).toEqual(Utils.BigNumber.make(100 * SATOSHI).plus(block.data.totalFee));
+                expect(delegate.forgedRewards).toEqual(Utils.BigNumber.make(50 * SATOSHI).plus(block.data.reward));
                 expect(delegate.lastBlock).toBeObject();
             });
 
@@ -196,8 +195,8 @@ describe("Wallet Manager", () => {
 
                 const delegate = generatorWallet.getAttribute<State.IWalletDelegateAttributes>("delegate");
                 expect(delegate.producedBlocks).toBe(99);
-                expect(delegate.forgedFees).toEqual(new Utils.BigNumber(100).minus(block.data.totalFee));
-                expect(delegate.forgedRewards).toEqual(new Utils.BigNumber(50).minus(block.data.reward));
+                expect(delegate.forgedFees).toEqual(Utils.BigNumber.make(100 * SATOSHI).minus(block.data.totalFee));
+                expect(delegate.forgedRewards).toEqual(Utils.BigNumber.make(50 * SATOSHI).minus(block.data.reward));
                 expect(delegate.lastBlock).toBeUndefined(); // actually it shouldn't
             });
 

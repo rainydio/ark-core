@@ -112,6 +112,7 @@ describe("Blockchain", () => {
         it("should remove blocks", async () => {
             const lastBlockHeight = blockchain.getLastBlock().data.height;
 
+            console.log(lastBlockHeight);
             await blockchain.removeBlocks(2);
             expect(blockchain.getLastBlock().data.height).toBe(lastBlockHeight - 2);
         });

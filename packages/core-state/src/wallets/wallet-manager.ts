@@ -251,6 +251,12 @@ export class WalletManager implements State.IWalletManager {
     }
 
     public async applyBlock(block: Interfaces.IBlock): Promise<void> {
+        if (block.data.height === 1) {
+            const genesisWallet = new Wallet(Identities.Address.fromPublicKey(block.data.generatorPublicKey));
+            genesisWallet.publicKey = block.data.generatorPublicKey;
+            this.reindex(genesisWallet);
+        }
+
         this.currentBlock = block;
         const appliedTransactions: Interfaces.ITransaction[] = [];
         try {
