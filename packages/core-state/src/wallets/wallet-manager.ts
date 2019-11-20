@@ -296,8 +296,6 @@ export class WalletManager implements State.IWalletManager {
             transaction.typeGroup,
         );
 
-        await transactionHandler.apply(transaction, this);
-
         let lockWallet: State.IWallet;
         let lockTransaction: Interfaces.ITransactionData;
         if (
@@ -308,6 +306,8 @@ export class WalletManager implements State.IWalletManager {
             lockWallet = this.findByIndex(State.WalletIndexes.Locks, lockId);
             lockTransaction = lockWallet.getAttribute("htlc.locks", {})[lockId];
         }
+
+        await transactionHandler.apply(transaction, this);
 
         const sender: State.IWallet = this.findByPublicKey(transaction.data.senderPublicKey);
         const recipient: State.IWallet = this.findByAddress(transaction.data.recipientId);
