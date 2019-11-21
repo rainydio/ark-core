@@ -181,8 +181,6 @@ export abstract class TransactionHandler implements ITransactionHandler {
             nonce = sender.nonce.plus(1);
         }
 
-        sender.nonce = nonce;
-
         const decreaseAmount: Utils.BigNumber = data.amount.plus(data.fee);
         const newBalance: Utils.BigNumber = sender.balance.minus(decreaseAmount);
 
@@ -193,14 +191,14 @@ export abstract class TransactionHandler implements ITransactionHandler {
                 const negativeBalanceExceptions: Record<string, Record<string, string>> =
                     Managers.configManager.get("exceptions.negativeBalances") || {};
                 const negativeBalances: Record<string, string> = negativeBalanceExceptions[sender.publicKey] || {};
-                if (!newBalance.isEqualTo(negativeBalances[sender.nonce.toString()] || 0)) {
+                if (!newBalance.isEqualTo(negativeBalances[nonce.toString()] || 0)) {
                     throw new InsufficientBalanceError();
                 }
             }
         }
 
         sender.balance = newBalance;
-
+        sender.nonce = nonce;
         if (sender.hasVoted()) {
             walletManager.decreaseDelegateVoteBalance(sender, decreaseAmount);
         }
@@ -213,14 +211,16 @@ export abstract class TransactionHandler implements ITransactionHandler {
         const sender: State.IWallet = walletManager.findByPublicKey(transaction.data.senderPublicKey);
         const data: Interfaces.ITransactionData = transaction.data;
 
-        const increaseAmount = data.amount.plus(data.fee);
-        sender.balance = sender.balance.plus(increaseAmount);
-
         if (data.version > 1) {
             sender.verifyTransactionNonceRevert(transaction);
         }
 
+        const increaseAmount = data.amount.plus(data.fee);
+        sender.balance = sender.balance.plus(increaseAmount);
         sender.nonce = sender.nonce.minus(1);
+        if (sender.hasVoted()) {
+            walletManager.increaseDelegateVoteBalance(sender, increaseAmount);
+        }
     }
 
     public abstract async applyToRecipient(
