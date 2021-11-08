@@ -1,14 +1,58 @@
 import { SATOSHI } from "../constants";
-import { ITransactionData } from "../interfaces";
+import { ITransactionData, IBlockData } from "../interfaces";
 import { configManager } from "../managers";
 import { Base58 } from "./base58";
 import { BigNumber } from "./bignum";
 import { calculateBlockTime, isNewBlockTime } from "./block-time-calculator";
 import { isLocalHost, isValidPeer } from "./is-valid-peer";
+import { Transactions } from "..";
+import memoizeOne from "memoize-one";
+import * as Blocks from "../blocks";
 
-let genesisTransactions: { [key: string]: boolean };
-let whitelistedBlockAndTransactionIds: { [key: string]: boolean };
-let currentNetwork: number;
+export const getExceptionBlockIds = memoizeOne((network: number): Set<string> => {
+    return new Set<string>(configManager.get("exceptions.blocks"));
+});
+
+export const getExceptionTransactionIds = memoizeOne((network: number): Set<string> => {
+    return new Set<string>(configManager.get("exceptions.transactions"));
+});
+
+export const getGenesisTransactionIds = memoizeOne((network: number): Set<string> => {
+    const genesisTransactions = configManager.get("genesisBlock.transactions") ?? [];
+    const genesisTxIds = genesisTransactions.map((txData: ITransactionData) => txData.id!);
+
+    return new Set<string>(genesisTxIds);
+});
+
+export const isExceptionBlockData = (blockData: IBlockData): boolean => {
+    const blockId = Blocks.Serializer.getId(blockData);
+
+    if (blockId.length === 64) {
+        const network: number = configManager.get("network.pubKeyHash");
+        return getExceptionBlockIds(network).has(blockId);
+    }
+
+    const whitelist = configManager.get("exceptions.blocksTransactions");
+    const expectedTxIds: string[] = whitelist[blockId] ?? [];
+    const actualTxIds = blockData.transactions?.map((txData) => Transactions.Transaction.getId(txData)) ?? [];
+
+    const everyExpectedFound = expectedTxIds.every((id) => actualTxIds.includes(id));
+    const everyActualFound = actualTxIds.every((id) => expectedTxIds.includes(id));
+
+    return everyExpectedFound && everyActualFound;
+};
+
+export const isExceptionTransactionData = (transactionData: ITransactionData): boolean => {
+    const txId = Transactions.Transaction.getId(transactionData);
+    const network: number = configManager.get("network.pubKeyHash");
+
+    return getExceptionTransactionIds(network).has(txId);
+};
+
+export const isGenesisTransactionId = (transactionId: string): boolean => {
+    const network: number = configManager.get("network.pubKeyHash");
+    return getGenesisTransactionIds(network).has(transactionId);
+};
 
 /**
  * Get human readable string from satoshis
@@ -20,69 +64,6 @@ export const formatSatoshi = (amount: BigNumber): string => {
     });
 
     return `${localeString} ${configManager.get("network.client.symbol")}`;
-};
-
-/**
- * Check if the given block or transaction id is an exception.
- */
-export const isIdException = (id: number | string | undefined): boolean => {
-    if (!id) {
-        return false;
-    }
-
-    const network: number = configManager.get("network.pubKeyHash");
-
-    if (!whitelistedBlockAndTransactionIds || currentNetwork !== network) {
-        currentNetwork = network;
-
-        whitelistedBlockAndTransactionIds = [
-            ...(configManager.get("exceptions.blocks") || []),
-            ...(configManager.get("exceptions.transactions") || []),
-        ].reduce((acc, curr) => Object.assign(acc, { [curr]: true }), {});
-    }
-
-    return !!whitelistedBlockAndTransactionIds[id];
-};
-
-export const isException = (blockOrTransaction: { id?: string; transactions?: ITransactionData[] }): boolean => {
-    if (typeof blockOrTransaction.id !== "string") {
-        return false;
-    }
-
-    if (blockOrTransaction.id.length < 64) {
-        // old block ids, we check that the transactions inside the block are correct
-        const blockExceptionTxIds: string[] = (configManager.get("exceptions.blocksTransactions") || {})[
-            blockOrTransaction.id
-        ];
-        const blockTransactions = blockOrTransaction.transactions || [];
-        if (!blockExceptionTxIds || blockExceptionTxIds.length !== blockTransactions.length) {
-            return false;
-        }
-
-        blockExceptionTxIds.sort();
-        const blockToCheckTxIds = blockTransactions.map((tx) => tx.id).sort();
-        for (let i = 0; i < blockExceptionTxIds.length; i++) {
-            if (blockToCheckTxIds[i] !== blockExceptionTxIds[i]) {
-                return false;
-            }
-        }
-    }
-
-    return isIdException(blockOrTransaction.id);
-};
-
-export const isGenesisTransaction = (id: string): boolean => {
-    const network: number = configManager.get("network.pubKeyHash");
-
-    if (!genesisTransactions || currentNetwork !== network) {
-        currentNetwork = network;
-
-        genesisTransactions = configManager
-            .get("genesisBlock.transactions")
-            .reduce((acc, curr) => Object.assign(acc, { [curr.id]: true }), {});
-    }
-
-    return genesisTransactions[id];
 };
 
 export const numberToHex = (num: number, padding = 2): string => {

@@ -1,35 +1,48 @@
-import { ITransactionData } from "../interfaces";
 import { BigNumber } from "../utils";
 import { ITransaction, ITransactionJson } from "./transactions";
 
-export interface IBlockVerification {
-    verified: boolean;
-    errors: string[];
-    containsMultiSignatures: boolean;
-}
+export type IBlock = IBlock0 | IBlock1;
+export type IBlockData = IBlockData0 | IBlockData1;
+export type IBlockHeader = IBlockHeader0 | IBlockHeader1;
+export type IBlockSignedSection = IBlockSignedSection0 | IBlockSignedSection1;
 
-export interface IBlock {
+export type IBlockJson = {
+    id: string;
+    idHex: string;
     serialized: string;
-    data: IBlockData;
-    transactions: ITransaction[];
-    verification: IBlockVerification;
-
-    getHeader(): IBlockData;
-    verifySignature(): boolean;
-    verify(): IBlockVerification;
-
-    toString(): string;
-    toJson(): IBlockJson;
-}
-
-export interface IBlockData {
-    id?: string;
-    idHex?: string;
 
     timestamp: number;
     version: number;
     height: number;
-    previousBlockHex?: string;
+    previousBlock: string;
+    previousBlockHex: string;
+    numberOfTransactions: number;
+    totalAmount: string;
+    totalFee: string;
+    reward: string;
+    payloadLength: number;
+    payloadHash: string;
+    generatorPublicKey: string;
+    previousBlockVotes?: string[];
+    blockSignature: string;
+    transactions: ITransactionJson[];
+};
+
+// Block version=0
+
+export interface IBlock0 {
+    readonly serialized: Buffer;
+    readonly id: string;
+    readonly header: IBlockHeader0;
+    readonly transactions: ITransaction[];
+
+    toJson(): IBlockJson;
+}
+
+export type IBlockSignedSection0 = {
+    version: 0;
+    timestamp: number;
+    height: number;
     previousBlock: string;
     numberOfTransactions: number;
     totalAmount: BigNumber;
@@ -38,30 +51,36 @@ export interface IBlockData {
     payloadLength: number;
     payloadHash: string;
     generatorPublicKey: string;
+};
 
-    blockSignature?: string;
-    serialized?: string;
-    transactions?: ITransactionData[];
+export type IBlockHeader0 = IBlockSignedSection0 & { blockSignature: string };
+export type IBlockData0 = IBlockHeader0 & { transactions: Buffer[] };
+
+// Block version=1
+
+export interface IBlock1 {
+    readonly serialized: Buffer;
+    readonly id: string;
+    readonly header: IBlockHeader1;
+    readonly transactions: ITransaction[];
+
+    toJson(): IBlockJson;
 }
 
-export interface IBlockJson {
-    id?: string;
-    idHex?: string;
-
+export type IBlockSignedSection1 = {
+    version: 1;
     timestamp: number;
-    version: number;
     height: number;
-    previousBlockHex?: string;
     previousBlock: string;
     numberOfTransactions: number;
-    totalAmount: string;
-    totalFee: string;
-    reward: string;
+    totalAmount: BigNumber;
+    totalFee: BigNumber;
+    reward: BigNumber;
     payloadLength: number;
     payloadHash: string;
     generatorPublicKey: string;
+    previousBlockVotes: string[];
+};
 
-    blockSignature?: string;
-    serialized?: string;
-    transactions?: ITransactionJson[];
-}
+export type IBlockHeader1 = IBlockSignedSection1 & { blockSignature: string };
+export type IBlockData1 = IBlockHeader1 & { transactions: Buffer[] };

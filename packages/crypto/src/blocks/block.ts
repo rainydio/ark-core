@@ -1,150 +1,70 @@
 import { Hash, HashAlgorithms, Slots } from "../crypto";
-import { BlockSchemaError } from "../errors";
-import { IBlock, IBlockData, IBlockJson, IBlockVerification, ITransaction, ITransactionData } from "../interfaces";
+import { IBlock, IBlockData, IBlockJson, ITransaction, ITransactionData, IBlockHeader } from "../interfaces";
 import { configManager } from "../managers/config";
-import { BigNumber, isException } from "../utils";
-import { validator } from "../validation";
+import { BigNumber } from "../utils";
 import { Serializer } from "./serializer";
 import { Managers } from "..";
+import { TransactionFactory } from "../transactions";
+import { Verifier } from "./verifier";
 
 export class Block implements IBlock {
-    // @ts-ignore - todo: this is public but not initialised on creation, either make it private or declare it as undefined
-    public serialized: string;
-    public data: IBlockData;
-    public transactions: ITransaction[];
-    public verification: IBlockVerification;
+    public readonly id: string;
+    public readonly serialized: Buffer;
+    public readonly data: IBlockData;
+    public readonly transactions: ITransaction[];
 
-    public constructor({ data, transactions, id }: { data: IBlockData; transactions: ITransaction[]; id?: string }) {
+    public constructor(data: IBlockData, verifier: Verifier = Verifier) {
+        this.id = Serializer.getId(data);
+        this.serialized = Serializer.serializeData(data);
         this.data = data;
+        this.transactions = data.transactions.map((t) => TransactionFactory.fromData(t));
 
         // TODO genesis block calculated id is wrong for some reason
-        if (this.data.height === 1) {
-            if (id) {
-                this.applyGenesisBlockFix(id);
-            } else if (data.id) {
-                this.applyGenesisBlockFix(data.id);
-            }
-        }
+        // if (this.data.height === 1) {
+        //     this.data.id = id || data.id;
+        //     this.data.idHex = BlockFactory.getIdHex(this.data.id || "");
+        // }
 
         // fix on real timestamp, this is overloading transaction
         // timestamp with block timestamp for storage only
         // also add sequence to keep database sequence
-        this.transactions = transactions.map((transaction, index) => {
-            transaction.data.blockId = this.data.id;
-            transaction.data.blockHeight = this.data.height;
-            transaction.data.sequence = index;
-            transaction.timestamp = this.data.timestamp;
-            return transaction;
-        });
-
-        delete this.data.transactions;
+        // this.transactions = transactions.map((transaction, index) => {
+        //     transaction.data.blockId = this.data.id;
+        //     transaction.data.blockHeight = this.data.height;
+        //     transaction.data.sequence = index;
+        //     transaction.timestamp = this.data.timestamp;
+        //     return transaction;
+        // });
 
         this.verification = this.verify();
 
         // Order of transactions messed up in mainnet V1
-        const { wrongTransactionOrder } = configManager.get("exceptions");
-        if (this.data.id && wrongTransactionOrder && wrongTransactionOrder[this.data.id]) {
-            const fixedOrderIds = wrongTransactionOrder[this.data.id];
+        const wrongTransactionOrder = configManager.get("exceptions").wrongTransactionOrder ?? {};
+        const orderedTransactionIds = wrongTransactionOrder[this.id];
 
-            this.transactions = fixedOrderIds.map((id: string) =>
+        if (orderedTransactionIds) {
+            this.transactions = orderedTransactionIds.map((id: string) =>
                 this.transactions.find((transaction) => transaction.id === id),
             );
         }
     }
 
-    public static applySchema(data: IBlockData): IBlockData | undefined {
-        let result = validator.validate("block", data);
-
-        if (!result.error) {
-            return result.value;
-        }
-
-        result = validator.validateException("block", data);
-
-        if (!result.errors) {
-            return result.value;
-        }
-
-        for (const err of result.errors) {
-            let fatal = false;
-
-            const match = err.dataPath.match(/\.transactions\[([0-9]+)\]/);
-            if (match === null) {
-                if (!isException(data)) {
-                    fatal = true;
-                }
-            } else {
-                const txIndex = match[1];
-
-                if (data.transactions) {
-                    const tx = data.transactions[txIndex];
-
-                    if (tx.id === undefined || !isException(tx)) {
-                        fatal = true;
-                    }
-                }
-            }
-
-            if (fatal) {
-                throw new BlockSchemaError(
-                    data.height,
-                    `Invalid data${err.dataPath ? " at " + err.dataPath : ""}: ` +
-                        `${err.message}: ${JSON.stringify(err.data)}`,
-                );
-            }
-        }
-
-        return result.value;
-    }
-
-    public static getIdHex(data: IBlockData): string {
-        const constants = configManager.getMilestone(data.height);
-        const payloadHash: Buffer = Serializer.serialize(data);
-
-        const hash: Buffer = HashAlgorithms.sha256(payloadHash);
-
-        if (constants.block.idFullSha256) {
-            return hash.toString("hex");
-        }
-
-        const temp: Buffer = Buffer.alloc(8);
-
-        for (let i = 0; i < 8; i++) {
-            temp[i] = hash[7 - i];
-        }
-
-        return temp.toString("hex");
-    }
-
-    public static toBytesHex(data): string {
-        const temp: string = data ? BigNumber.make(data).toString(16) : "";
-
-        return "0".repeat(16 - temp.length) + temp;
-    }
-
-    public static getId(data: IBlockData): string {
-        const constants = configManager.getMilestone(data.height);
-        const idHex: string = Block.getIdHex(data);
-
-        return constants.block.idFullSha256 ? idHex : BigNumber.make(`0x${idHex}`).toString();
-    }
-
-    public getHeader(): IBlockData {
-        const header: IBlockData = Object.assign({}, this.data);
+    public getHeader(): IBlockHeader {
+        const header = { ...this.data };
         delete header.transactions;
-
         return header;
     }
 
     public verifySignature(): boolean {
-        const bytes: Buffer = Serializer.serialize(this.data, false);
-        const hash: Buffer = HashAlgorithms.sha256(bytes);
-
         if (!this.data.blockSignature) {
             throw new Error();
         }
 
-        return Hash.verifyECDSA(hash, this.data.blockSignature, this.data.generatorPublicKey);
+        return Hash.verifyECDSA(
+            Serializer.getSignedHash(this.data),
+            this.data.blockSignature,
+            this.data.generatorPublicKey,
+        );
     }
 
     public toJson(): IBlockJson {
@@ -192,9 +112,8 @@ export class Block implements IBlock {
                 result.errors.push("Invalid block timestamp");
             }
 
-            const size: number = Serializer.size(this);
-            if (size > constants.block.maxPayload) {
-                result.errors.push(`Payload is too large: ${size} > ${constants.block.maxPayload}`);
+            if (this.serialized.length > constants.block.maxPayload) {
+                result.errors.push(`Payload is too large: ${this.serialized.length} > ${constants.block.maxPayload}`);
             }
 
             const invalidTransactions: ITransaction[] = this.transactions.filter((tx) => !tx.verified);
@@ -283,10 +202,5 @@ export class Block implements IBlock {
         result.verified = result.errors.length === 0;
 
         return result;
-    }
-
-    private applyGenesisBlockFix(id: string): void {
-        this.data.id = id;
-        this.data.idHex = id.length === 64 ? id : Block.toBytesHex(id); // if id.length is 64 it's already hex
     }
 }

@@ -249,21 +249,29 @@ export class ForgerService {
         round: Contracts.P2P.CurrentRound,
         networkState: Contracts.P2P.NetworkState,
     ): Promise<void> {
-        AppUtils.assert.defined<number>(networkState.getNodeHeight());
-        Managers.configManager.setHeight(networkState.getNodeHeight()!);
+        const prettyName = `${this.usernames[delegate.publicKey]} (${delegate.publicKey})`;
+        const previousBlockId = networkState.getLastBlockId();
+        const previousBlockHeight = networkState.getNodeHeight();
 
+        if (!previousBlockId || !previousBlockHeight) {
+            this.logger.warning(`Failed to forge new block by delegate ${prettyName}, no previous block.`);
+        }
+
+        AppUtils.assert.defined<string>(previousBlockId);
+        AppUtils.assert.defined<number>(previousBlockHeight);
+
+        Managers.configManager.setHeight(previousBlockHeight);
         const transactions: Interfaces.ITransactionData[] = await this.getTransactionsForForging();
 
+        const previousBlockIdHex = Blocks.Block.getIdHex(previousBlockId);
+        const previousBlock = { id: previousBlockId, idHex: previousBlockIdHex, height: previousBlockHeight };
+        const reward = round.reward;
+        const timestamp = round.timestamp;
+
         const block: Interfaces.IBlock | undefined = delegate.forge(transactions, {
-            previousBlock: {
-                id: networkState.getLastBlockId(),
-                idHex: Managers.configManager.getMilestone().block.idFullSha256
-                    ? networkState.getLastBlockId()
-                    : Blocks.Block.toBytesHex(networkState.getLastBlockId()),
-                height: networkState.getNodeHeight(),
-            },
-            timestamp: round.timestamp,
-            reward: round.reward,
+            previousBlock,
+            reward,
+            timestamp,
         });
 
         AppUtils.assert.defined<Interfaces.IBlock>(block);
@@ -271,7 +279,6 @@ export class ForgerService {
 
         const minimumMs = 2000;
         const timeLeftInMs: number = this.getRoundRemainingSlotTime(round);
-        const prettyName = `${this.usernames[delegate.publicKey]} (${delegate.publicKey})`;
 
         if (timeLeftInMs >= minimumMs) {
             this.logger.info(`Forged new block ${block.data.id} by delegate ${prettyName}`);

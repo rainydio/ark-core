@@ -182,8 +182,14 @@ export class InvalidMultiSignatureAssetError extends CryptoError {
     }
 }
 
-export class DuplicateParticipantInMultiSignatureError extends CryptoError {
+export class DuplicateParticipantError extends CryptoError {
     public constructor() {
-        super(`Invalid multi signature, because duplicate participant found.`);
+        super(`Duplicate paticipant found.`);
+    }
+}
+
+export class MultiSignatureError extends CryptoError {
+    public constructor(reason: string) {
+        super(`Invalid multi signature. ${reason}`);
     }
 }

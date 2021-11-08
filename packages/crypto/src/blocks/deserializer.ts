@@ -1,108 +1,85 @@
+import { IBlockData, IBlockSignedSection, IBlockHeader } from "../interfaces";
+import { configManager } from "../managers";
+import { BigNumber } from "../utils";
 import ByteBuffer from "bytebuffer";
 
-import { IBlockData, ITransaction } from "../interfaces";
-import { configManager } from "../managers";
-import { TransactionFactory } from "../transactions";
-import { BigNumber } from "../utils";
-import { Block } from "./block";
-
 export class Deserializer {
-    public static deserialize(
-        serialized: Buffer,
-        headerOnly: boolean = false,
-        options: { deserializeTransactionsUnchecked?: boolean } = {},
-    ): { data: IBlockData; transactions: ITransaction[] } {
-        const block = {} as IBlockData;
-        let transactions: ITransaction[] = [];
+    public static deseriaizeHeader(serialized: Buffer): IBlockHeader {
+        const buffer = ByteBuffer.wrap(serialized);
+        const signedSection = this.readSignedSection(buffer);
+        const blockSignature = this.readBlockSignature(buffer);
 
-        const buf: ByteBuffer = new ByteBuffer(serialized.length, true);
-        buf.append(serialized);
-        buf.reset();
-
-        this.deserializeHeader(block, buf);
-
-        headerOnly = headerOnly || buf.remaining() === 0;
-        if (!headerOnly) {
-            transactions = this.deserializeTransactions(block, buf, options.deserializeTransactionsUnchecked);
-        }
-
-        block.idHex = Block.getIdHex(block);
-        block.id = Block.getId(block);
-
-        const { outlookTable } = configManager.get("exceptions");
-
-        if (outlookTable && outlookTable[block.id]) {
-            const constants = configManager.getMilestone(block.height);
-
-            if (constants.block.idFullSha256) {
-                block.id = outlookTable[block.id];
-                block.idHex = block.id;
-            } else {
-                block.id = outlookTable[block.id];
-                block.idHex = Block.toBytesHex(block.id);
-            }
-        }
-
-        return { data: block, transactions };
+        return { ...signedSection, blockSignature };
     }
 
-    private static deserializeHeader(block: IBlockData, buf: ByteBuffer): void {
-        block.version = buf.readUint32();
-        block.timestamp = buf.readUint32();
-        block.height = buf.readUint32();
+    public static deserializeData(serialized: Buffer): IBlockData {
+        const buffer = ByteBuffer.wrap(serialized);
+        const signedSection = this.readSignedSection(buffer);
+        const blockSignature = this.readBlockSignature(buffer);
+        const transactions = this.readTransactions(buffer, signedSection.numberOfTransactions);
 
-        const constants = configManager.getMilestone(block.height - 1 || 1);
+        return { ...signedSection, blockSignature, transactions };
+    }
+
+    public static readSignedSection(buffer: ByteBuffer): IBlockSignedSection {
+        const section = {} as IBlockSignedSection;
+        const version = buffer.readUint32();
+
+        if (version !== 0 && version !== 1) {
+            throw new Error("Unexpected block version.");
+        }
+
+        section.version = version;
+        section.timestamp = buffer.readUint32();
+        section.height = buffer.readUint32();
+        section.previousBlock = this.readId(buffer, section.height - 1 || 1);
+        section.numberOfTransactions = buffer.readUint32();
+        section.totalAmount = BigNumber.make(buffer.readUint64().toString());
+        section.totalFee = BigNumber.make(buffer.readUint64().toString());
+        section.reward = BigNumber.make(buffer.readUint64().toString());
+        section.payloadLength = buffer.readUint32();
+        section.payloadHash = buffer.readBytes(32).toString("hex");
+        section.generatorPublicKey = buffer.readBytes(33).toString("hex");
+
+        if (section.version === 1) {
+            section.previousBlockVotes = this.readPreviousBlockVotes(buffer);
+        }
+
+        return section;
+    }
+
+    public static readId(buffer: ByteBuffer, height: number): string {
+        const constants = configManager.getMilestone(height);
 
         if (constants.block.idFullSha256) {
-            const previousBlockFullSha256 = buf.readBytes(32).toString("hex");
-            block.previousBlockHex = previousBlockFullSha256;
-            block.previousBlock = previousBlockFullSha256;
+            return buffer.readBytes(32).toString("hex");
         } else {
-            block.previousBlockHex = buf.readBytes(8).toString("hex");
-            block.previousBlock = BigNumber.make(`0x${block.previousBlockHex}`).toString();
+            return buffer.readBytes(8).BE().readUint64().toString(10);
         }
-
-        block.numberOfTransactions = buf.readUint32();
-        block.totalAmount = BigNumber.make(buf.readUint64().toString());
-        block.totalFee = BigNumber.make(buf.readUint64().toString());
-        block.reward = BigNumber.make(buf.readUint64().toString());
-        block.payloadLength = buf.readUint32();
-        block.payloadHash = buf.readBytes(32).toString("hex");
-        block.generatorPublicKey = buf.readBytes(33).toString("hex");
-
-        const signatureLength = (): number => {
-            buf.mark();
-
-            const lengthHex: string = buf.skip(1).readBytes(1).toString("hex");
-
-            buf.reset();
-
-            return parseInt(lengthHex, 16) + 2;
-        };
-
-        block.blockSignature = buf.readBytes(signatureLength()).toString("hex");
     }
 
-    private static deserializeTransactions(
-        block: IBlockData,
-        buf: ByteBuffer,
-        deserializeTransactionsUnchecked: boolean = false,
-    ): ITransaction[] {
-        const transactionLengths: number[] = [];
+    public static readPreviousBlockVotes(buffer: ByteBuffer): string[] {
+        return [];
+    }
 
-        for (let i = 0; i < block.numberOfTransactions; i++) {
-            transactionLengths.push(buf.readUint32());
+    public static readBlockSignature(buffer: ByteBuffer): string {
+        if (buffer.readUint8(buffer.offset) !== 0x30) {
+            throw new Error("Not ECDSA signature.");
         }
 
-        const transactions: ITransaction[] = [];
-        block.transactions = [];
-        for (const length of transactionLengths) {
-            const transactionBytes = buf.readBytes(length).toBuffer();
-            const transaction = deserializeTransactionsUnchecked
-                ? TransactionFactory.fromBytesUnsafe(transactionBytes)
-                : TransactionFactory.fromBytes(transactionBytes);
-            transactions.push(transaction);
-            block.transactions.push(transaction.data);
+        return buffer.readBytes(2 + buffer.readUint8(buffer.offset + 1)).toString("hex");
+    }
+
+    public static readTransactions(buffer: ByteBuffer, count: number): Buffer[] {
+        const lengths: number[] = [];
+        for (let i = 0; i < count; i++) {
+            lengths.push(buffer.readUint32());
+        }
+
+        const transactions: Buffer[] = [];
+        for (const length of lengths) {
+            const serialized = buffer.readBytes(length).toBuffer();
+            transactions.push(serialized);
         }
 
         return transactions;

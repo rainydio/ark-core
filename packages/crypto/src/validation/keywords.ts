@@ -4,7 +4,7 @@ import ajvKeywords from "ajv-keywords";
 import { TransactionType } from "../enums";
 import { ITransactionData } from "../interfaces";
 import { configManager } from "../managers";
-import { BigNumber, isGenesisTransaction } from "../utils";
+import { BigNumber, isGenesisTransactionId } from "../utils";
 
 const maxBytes = (ajv: Ajv) => {
     ajv.addKeyword("maxBytes", {
@@ -99,7 +99,7 @@ const bignumber = (ajv: Ajv) => {
                         if (schema.block) {
                             bypassGenesis = parentObject.height === 1;
                         } else {
-                            bypassGenesis = isGenesisTransaction(parentObject.id);
+                            bypassGenesis = isGenesisTransactionId(parentObject.id);
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-import Ajv from "ajv";
+import Ajv, { ErrorObject } from "ajv";
 import ajvKeywords from "ajv-keywords";
 
 import { ISchemaValidationResult } from "../interfaces";
@@ -23,11 +23,11 @@ export class Validator {
         return this.ajv;
     }
 
-    public validate<T = any>(schemaKeyRef: string | boolean | object, data: T): ISchemaValidationResult<T> {
+    public validate<T = any>(schemaKeyRef: string | boolean | object, data: T): ErrorObject[] {
         return this.validateSchema(this.ajv, schemaKeyRef, data);
     }
 
-    public validateException<T = any>(schemaKeyRef: string | boolean | object, data: T): ISchemaValidationResult<T> {
+    public validateException<T = any>(schemaKeyRef: string | boolean | object, data: T): ErrorObject[] {
         const ajv = this.instantiateAjv({ allErrors: true, verbose: true });
 
         for (const schema of this.transactionSchemas.values()) {
@@ -61,20 +61,9 @@ export class Validator {
         this.extendTransactionSchema(this.ajv, schema, remove);
     }
 
-    private validateSchema<T = any>(
-        ajv: Ajv.Ajv,
-        schemaKeyRef: string | boolean | object,
-        data: T,
-    ): ISchemaValidationResult<T> {
-        try {
-            ajv.validate(schemaKeyRef, data);
-
-            const error = ajv.errors ? ajv.errorsText() : undefined;
-
-            return { value: data, error, errors: ajv.errors || undefined };
-        } catch (error) {
-            return { value: undefined, error: error.stack, errors: [] };
-        }
+    private validateSchema<T = any>(ajv: Ajv.Ajv, schemaKeyRef: string | boolean | object, value: T): ErrorObject[] {
+        ajv.validate(schemaKeyRef, value);
+        return ajv.errors ?? [];
     }
 
     private instantiateAjv(options: Record<string, any>) {

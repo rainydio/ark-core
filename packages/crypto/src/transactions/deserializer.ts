@@ -2,9 +2,10 @@ import ByteBuffer from "bytebuffer";
 
 import { TransactionType, TransactionTypeGroup } from "../enums";
 import {
-    DuplicateParticipantInMultiSignatureError,
+    MultiSignatureError,
     InvalidTransactionBytesError,
     TransactionVersionError,
+    DuplicateParticipantError,
 } from "../errors";
 import { Address } from "../identities";
 import { IDeserializeOptions, ITransaction, ITransactionData } from "../interfaces";
@@ -169,21 +170,10 @@ export class Deserializer {
 
         if (buf.remaining()) {
             if (buf.remaining() % 65 === 0) {
-                transaction.signatures = [];
-
-                const count: number = buf.remaining() / 65;
-                const publicKeyIndexes: { [index: number]: boolean } = {};
-                for (let i = 0; i < count; i++) {
-                    const multiSignaturePart: string = buf.readBytes(65).toString("hex");
-                    const publicKeyIndex: number = parseInt(multiSignaturePart.slice(0, 2), 16);
-
-                    if (!publicKeyIndexes[publicKeyIndex]) {
-                        publicKeyIndexes[publicKeyIndex] = true;
-                    } else {
-                        throw new DuplicateParticipantInMultiSignatureError();
-                    }
-
-                    transaction.signatures.push(multiSignaturePart);
+                try {
+                    transaction.signatures = this.readSchnorrMultiSignatures(buf, buf.remaining() / 65);
+                } catch (error) {
+                    throw new MultiSignatureError(error.message);
                 }
             } else {
                 throw new InvalidTransactionBytesError("signature buffer not exhausted");
@@ -222,5 +212,45 @@ export class Deserializer {
         buffer.reset();
 
         return buffer;
+    }
+
+    public static readSchnorrMultiSignatures(buffer: ByteBuffer, count: number): string[] {
+        const indexes = new Set<number>();
+        const signatures: string[] = [];
+
+        for (let i = 0; i < count; i++) {
+            const index = buffer.readUint8(buffer.offset);
+            buffer.readBytes(64, buffer.offset + 1); // touch signature
+
+            if (indexes.has(index)) {
+                throw new DuplicateParticipantError();
+            }
+
+            signatures.push(buffer.readBytes(65).toString("hex"));
+            indexes.add(index);
+        }
+
+        return signatures;
+    }
+
+    public static getSchnorrMultiSignatureIndex(multiSignature: string): number {
+        if (multiSignature.length !== 130) {
+            throw new MultiSignatureError("Invalid signature string.");
+        }
+
+        const index = parseInt(`${multiSignature[0]}${multiSignature[1]}`, 16);
+        if (isNaN(index)) {
+            throw new MultiSignatureError("Invalid signature string.");
+        }
+
+        return index;
+    }
+
+    public static getSchnorrMultiSignatureSignature(multiSignature: string): string {
+        if (multiSignature.length !== 130) {
+            throw new MultiSignatureError("Invalid signature string.");
+        }
+
+        return multiSignature.slice(2);
     }
 }

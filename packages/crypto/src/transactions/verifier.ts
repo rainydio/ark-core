@@ -1,15 +1,16 @@
 import { Hash } from "../crypto/hash";
-import { DuplicateParticipantInMultiSignatureError, InvalidMultiSignatureAssetError } from "../errors";
+import { MultiSignatureError, InvalidMultiSignatureAssetError, DuplicateParticipantError } from "../errors";
 import { IMultiSignatureAsset, ISchemaValidationResult, ITransactionData, IVerifyOptions } from "../interfaces";
 import { configManager } from "../managers";
-import { isException } from "../utils";
 import { validator } from "../validation";
 import { TransactionTypeFactory } from "./types/factory";
 import { Utils } from "./utils";
+import { Deserializer } from "./deserializer";
+import { isExceptionTransactionData } from "../utils";
 
 export class Verifier {
     public static verify(data: ITransactionData, options?: IVerifyOptions): boolean {
-        if (isException(data)) {
+        if (isExceptionTransactionData(data)) {
             return true;
         }
 
@@ -39,12 +40,8 @@ export class Verifier {
     }
 
     public static verifySignatures(transaction: ITransactionData, multiSignature: IMultiSignatureAsset): boolean {
-        if (!multiSignature) {
-            throw new InvalidMultiSignatureAssetError();
-        }
-
-        const { publicKeys, min }: IMultiSignatureAsset = multiSignature;
-        const { signatures }: ITransactionData = transaction;
+        if (!multiSignature) throw new InvalidMultiSignatureAssetError();
+        if (!transaction.signatures) return false;
 
         const hash: Buffer = Utils.toHash(transaction, {
             excludeSignature: true,
@@ -52,38 +49,30 @@ export class Verifier {
             excludeMultiSignature: true,
         });
 
-        const publicKeyIndexes: { [index: number]: boolean } = {};
-        let verified: boolean = false;
-        let verifiedSignatures: number = 0;
+        const { publicKeys, min }: IMultiSignatureAsset = multiSignature;
+        const indexes = new Set<number>();
 
-        if (signatures) {
-            for (let i = 0; i < signatures.length; i++) {
-                const signature: string = signatures[i];
-                const publicKeyIndex: number = parseInt(signature.slice(0, 2), 16);
+        try {
+            for (const multiSignature of transaction.signatures) {
+                const index = Deserializer.getSchnorrMultiSignatureIndex(multiSignature);
+                const signature = Deserializer.getSchnorrMultiSignatureSignature(multiSignature);
+                const publicKey = publicKeys[index];
 
-                if (!publicKeyIndexes[publicKeyIndex]) {
-                    publicKeyIndexes[publicKeyIndex] = true;
-                } else {
-                    throw new DuplicateParticipantInMultiSignatureError();
-                }
+                if (!publicKey) throw new Error("Invalid index.");
+                if (indexes.has(index)) throw new DuplicateParticipantError();
+                if (!Hash.verifySchnorr(hash, signature, publicKey)) throw new Error("Invalid signature.");
 
-                const partialSignature: string = signature.slice(2, 130);
-                const publicKey: string = publicKeys[publicKeyIndex];
+                indexes.add(index);
 
-                if (Hash.verifySchnorr(hash, partialSignature, publicKey)) {
-                    verifiedSignatures++;
-                }
-
-                if (verifiedSignatures === min) {
-                    verified = true;
-                    break;
-                } else if (signatures.length - (i + 1 - verifiedSignatures) < min) {
-                    break;
+                if (indexes.size === min) {
+                    return true;
                 }
             }
+        } catch (error) {
+            throw new MultiSignatureError(error.message);
         }
 
-        return verified;
+        return false;
     }
 
     public static verifyHash(data: ITransactionData, disableVersionCheck = false): boolean {

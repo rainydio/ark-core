@@ -1,106 +1,97 @@
-import assert from "assert";
 import ByteBuffer from "bytebuffer";
 
-import { PreviousBlockIdFormatError } from "../errors";
-import { IBlock, IBlockData, ITransactionData } from "../interfaces";
+import { IBlockData, IBlockSignedSection, IBlockHeader } from "../interfaces";
 import { configManager } from "../managers/config";
-import { Utils } from "../transactions";
-import { Block } from "./block";
+import { HashAlgorithms } from "../crypto";
 
 export class Serializer {
-    public static size(block: IBlock): number {
-        let size = this.headerSize(block.data) + block.data.blockSignature!.length / 2;
+    private static cachedIds = new WeakMap<IBlockHeader, string>();
 
-        for (const transaction of block.transactions) {
-            size += 4 /* tx length */ + transaction.serialized.length;
+    public static getId(header: IBlockHeader): string {
+        let id = this.cachedIds.get(header);
+
+        if (!id) {
+            const constants = configManager.getMilestone(header.height);
+            const serializedHeader = Serializer.serializeHeader(header);
+            const hash = HashAlgorithms.sha256(serializedHeader);
+            const computedId = constants.block.idFullSha256
+                ? hash.toString("hex")
+                : hash.readBigUInt64LE().toString(10);
+
+            const outlookTable: Record<string, string> = configManager.get("exceptions").outlookTable ?? {};
+            id = outlookTable[computedId] ?? computedId;
+            this.cachedIds.set(header, id);
         }
 
-        return size;
+        return id;
     }
 
-    public static serializeWithTransactions(block: IBlockData): Buffer {
-        const transactions: ITransactionData[] = block.transactions || [];
-        block.numberOfTransactions = block.numberOfTransactions || transactions.length;
-
-        const serializedHeader: Buffer = this.serialize(block);
-
-        const buffer: ByteBuffer = new ByteBuffer(serializedHeader.length + transactions.length * 4, true)
-            .append(serializedHeader)
-            .skip(transactions.length * 4);
-
-        for (let i = 0; i < transactions.length; i++) {
-            const serialized: Buffer = Utils.toBytes(transactions[i]);
-            buffer.writeUint32(serialized.length, serializedHeader.length + i * 4);
-            buffer.append(serialized);
-        }
-
-        return buffer.flip().toBuffer();
-    }
-
-    public static serialize(block: IBlockData, includeSignature = true): Buffer {
-        const buffer: ByteBuffer = new ByteBuffer(512, true);
-
-        this.serializeHeader(block, buffer);
-
-        if (includeSignature) {
-            this.serializeSignature(block, buffer);
-        }
-
-        return buffer.flip().toBuffer();
-    }
-
-    private static headerSize(block: IBlockData): number {
-        const constants = configManager.getMilestone(block.height - 1 || 1);
-
-        return (
-            4 + // version
-            4 + // timestamp
-            4 + // height
-            (constants.block.idFullSha256 ? 32 : 8) + // previousBlock
-            4 + // numberOfTransactions
-            8 + // totalAmount
-            8 + // totalFee
-            8 + // reward
-            4 + // payloadLength
-            block.payloadHash.length / 2 +
-            block.generatorPublicKey.length / 2
-        );
-    }
-
-    private static serializeHeader(block: IBlockData, buffer: ByteBuffer): void {
-        const constants = configManager.getMilestone(block.height - 1 || 1);
-
-        if (constants.block.idFullSha256) {
-            if (block.previousBlock.length !== 64) {
-                throw new PreviousBlockIdFormatError(block.height, block.previousBlock);
-            }
-
-            block.previousBlockHex = block.previousBlock;
+    public static getIdHex(id: string): string {
+        if (id.length === 64) {
+            return id;
         } else {
-            block.previousBlockHex = Block.toBytesHex(block.previousBlock);
+            return BigInt(id).toString(16).padStart(16, "0");
         }
-
-        buffer.writeUint32(block.version);
-        buffer.writeUint32(block.timestamp);
-        buffer.writeUint32(block.height);
-        buffer.append(block.previousBlockHex, "hex");
-        buffer.writeUint32(block.numberOfTransactions);
-        // @ts-ignore - The ByteBuffer types say we can't use strings but the code actually handles them.
-        buffer.writeUint64(block.totalAmount.toString());
-        // @ts-ignore - The ByteBuffer types say we can't use strings but the code actually handles them.
-        buffer.writeUint64(block.totalFee.toString());
-        // @ts-ignore - The ByteBuffer types say we can't use strings but the code actually handles them.
-        buffer.writeUint64(block.reward.toString());
-        buffer.writeUint32(block.payloadLength);
-        buffer.append(block.payloadHash, "hex");
-        buffer.append(block.generatorPublicKey, "hex");
-
-        assert.strictEqual(buffer.offset, this.headerSize(block));
     }
 
-    private static serializeSignature(block: IBlockData, buffer: ByteBuffer): void {
-        if (block.blockSignature) {
-            buffer.append(block.blockSignature, "hex");
+    public static getSignedHash(candidateHeader: IBlockSignedSection): Buffer {
+        const constants = configManager.getMilestone(candidateHeader.height);
+        const buffer = new ByteBuffer(constants.block.maxPayload);
+        this.writeSignedSection(buffer, candidateHeader);
+        const serialized = buffer.flip().toBuffer();
+
+        return HashAlgorithms.sha256(serialized);
+    }
+
+    public static serializeHeader(header: IBlockHeader): Buffer {
+        const constants = configManager.getMilestone(header.height);
+        const buffer = new ByteBuffer(constants.block.maxPayload);
+        this.writeSignedSection(buffer, header);
+        this.writeBlockSignature(buffer, header.blockSignature);
+        return buffer.flip().toBuffer();
+    }
+
+    public static serializeData(data: IBlockData): Buffer {
+        const constants = configManager.getMilestone(data.height);
+        const buffer = new ByteBuffer(constants.block.maxPayload);
+        this.writeSignedSection(buffer, data);
+        this.writeBlockSignature(buffer, data.blockSignature);
+        this.writeTransactions(buffer, data.transactions);
+        return buffer.flip().toBuffer();
+    }
+
+    public static writeSignedSection(buffer: ByteBuffer, header: IBlockSignedSection): void {
+        const previosBlockHex = this.getIdHex(header.previousBlock);
+
+        buffer.writeUint8(header.version);
+        buffer.writeUint32(header.timestamp);
+        buffer.writeUint32(header.height);
+        buffer.writeBytes(previosBlockHex, "hex");
+        buffer.writeUint32(header.numberOfTransactions);
+        // @ts-ignore: incorrect ByteBuffer types
+        buffer.writeUint64(header.totalAmount.toString());
+        // @ts-ignore: incorrect ByteBuffer types
+        buffer.writeUint64(header.totalFee.toString());
+        // @ts-ignore: incorrect ByteBuffer types
+        buffer.writeUint64(header.reward.toString());
+        buffer.writeUint32(header.payloadLength);
+        buffer.writeBytes(header.payloadHash, "hex");
+        buffer.writeBytes(header.generatorPublicKey, "hex");
+
+        if (header.version === 1) {
+            this.writePreviousBlockVotes(buffer, header.previousBlockVotes);
         }
+    }
+
+    public static writePreviousBlockVotes(buffer: ByteBuffer, previousBlockVotes: string[]): void {
+        //
+    }
+
+    public static writeBlockSignature(buffer: ByteBuffer, blockSignature: string): void {
+        buffer.writeBytes(blockSignature, "hex");
+    }
+
+    public static writeTransactions(buffer: ByteBuffer, transactions: Buffer[]): void {
+        //
     }
 }

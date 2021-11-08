@@ -9,6 +9,8 @@ describe("block deserializer", () => {
             const outlookTableBlockId = "123456";
             configManager.set("exceptions.outlookTable", { [dummyBlock3.id]: outlookTableBlockId });
 
+            console.log(dummyBlock3, Serializer.serialize(dummyBlock3).toString("hex"));
+
             const deserialized = Deserializer.deserialize(Serializer.serialize(dummyBlock3), true).data;
 
             expect(deserialized.id).toEqual(outlookTableBlockId);
